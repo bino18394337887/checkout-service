@@ -3,7 +3,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.checkout_service import app  # 直接导入Flask应用实例
 
-# ------------------- 功能测试（保持不变，继续使用client fixture）-------------------
+# ------------------- 功能测试（保持不变）-------------------
 @pytest.mark.parametrize("input_data, expected_status, expected_response", [
     # 正常场景
     ({"items": [{"price": 20, "quantity": 3}]}, 200, {"total": 60, "status": "ok"}),
@@ -22,21 +22,21 @@ def test_checkout_functionality(client, input_data, expected_status, expected_re
     assert response.status_code == expected_status
     assert {k: v for k, v in response.json.items() if k != "details"} == expected_response
 
-# ------------------- 并发测试（核心重构：完全独立的线程上下文）-------------------
-def test_checkout_concurrency():  # 关键：不传入client fixture
+# ------------------- 并发测试（修正方法调用 + 简化上下文）-------------------
+def test_checkout_concurrency():  # 不传入client fixture，避免共享
     input_data = {"items": [{"price": 20, "quantity": 3}]}
     concurrent_num = 5
     expected_total = 60
     results = []
 
     def send_test_request():
-        """每个线程创建独立客户端+独立上下文，完全隔离"""
+        """每个线程独立客户端 + 独立应用上下文"""
         try:
-            # 1. 每个线程创建独立的测试客户端（不共享fixture的client）
-            with app.test_client() as thread_client:
-                # 2. 包裹「应用上下文 + 请求上下文」，确保线程独立
-                with app.app_context(), thread_client.test_request_context():
-                    # 3. 用当前线程的客户端发请求
+            # 1. 手动绑定应用上下文（线程独立）
+            with app.app_context():
+                # 2. 创建当前线程的独立测试客户端
+                with app.test_client() as thread_client:
+                    # 3. 发请求（客户端自动管理请求上下文，无需额外手动创建）
                     response = thread_client.post("/checkout", json=input_data)
                     return {
                         "success": True,
