@@ -1,0 +1,40 @@
+name: Python Test
+on:
+  push:
+    branches: [ main ]  # 仅在推送到main分支时触发CI
+  pull_request:
+    branches: [ main ]  # 可选：拉取请求时也触发（便于代码审查）
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # 步骤1：拉取仓库代码到CI服务器
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步骤2：配置Python 3.11环境
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"  # 缓存依赖，加速下次构建
+
+      # 步骤3：安装依赖
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 步骤4：执行测试并生成HTML报告
+      - name: Run tests with pytest
+        run: pytest test_checkout.py --html=report.html --self-contained-html
+        continue-on-error: false  # 测试失败则终止CI
+
+      # 步骤5：上传报告（即使测试失败也保留）
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-test-report
+          path: report.html
+        if: always()
