@@ -1,9 +1,9 @@
 import pytest
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from app.checkout_service import app  # 关键：导入Flask应用实例
+from app.checkout_service import app  # 直接导入Flask应用实例
 
-# 功能测试（无需修改，保持之前的正确逻辑）
+# ------------------- 功能测试（保持不变，继续使用client fixture）-------------------
 @pytest.mark.parametrize("input_data, expected_status, expected_response", [
     # 正常场景
     ({"items": [{"price": 20, "quantity": 3}]}, 200, {"total": 60, "status": "ok"}),
@@ -22,35 +22,37 @@ def test_checkout_functionality(client, input_data, expected_status, expected_re
     assert response.status_code == expected_status
     assert {k: v for k, v in response.json.items() if k != "details"} == expected_response
 
-# 并发测试（核心修复：手动隔离Flask上下文）
-def test_checkout_concurrency(client):
+# ------------------- 并发测试（核心重构：完全独立的线程上下文）-------------------
+def test_checkout_concurrency():  # 关键：不传入client fixture
     input_data = {"items": [{"price": 20, "quantity": 3}]}
     concurrent_num = 5
     expected_total = 60
     results = []
 
-    # 关键：每个并发任务手动管理应用上下文
     def send_test_request():
+        """每个线程创建独立客户端+独立上下文，完全隔离"""
         try:
-            # 手动推入应用上下文（确保当前线程有独立上下文）
-            with app.app_context():
-                # 执行测试请求（client会自动管理请求上下文）
-                response = client.post("/checkout", json=input_data)
-                return {
-                    "success": True,
-                    "status_code": response.status_code,
-                    "total": response.json.get("total") if response.status_code == 200 else None
-                }
+            # 1. 每个线程创建独立的测试客户端（不共享fixture的client）
+            with app.test_client() as thread_client:
+                # 2. 包裹「应用上下文 + 请求上下文」，确保线程独立
+                with app.app_context(), thread_client.test_request_context():
+                    # 3. 用当前线程的客户端发请求
+                    response = thread_client.post("/checkout", json=input_data)
+                    return {
+                        "success": True,
+                        "status_code": response.status_code,
+                        "total": response.json.get("total") if response.status_code == 200 else None
+                    }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # 执行并发请求（保持不变）
+    # 执行并发请求
     with ThreadPoolExecutor(max_workers=concurrent_num) as executor:
         futures = [executor.submit(send_test_request) for _ in range(concurrent_num)]
         for future in as_completed(futures):
             results.append(future.result())
 
-    # 验证结果（保持不变）
+    # 验证结果
     for result in results:
         assert result["success"] is True, f"并发请求失败：{result.get('error')}"
         assert result["status_code"] == 200
